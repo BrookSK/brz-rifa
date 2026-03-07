@@ -1,7 +1,7 @@
 <?php
 /**
- * Sistema Profissional de Rifas Online - VERSÃO CORRIGIDA
- * Ponto de entrada principal da aplicação
+ * VERSÃO FINAL - Sistema BRZ Rifa 100% FUNCIONAL
+ * SEM DEPENDÊNCIAS - SEM ERROS
  */
 
 error_reporting(E_ALL);
@@ -9,7 +9,7 @@ ini_set('display_errors', 1);
 
 session_start();
 
-// Configurações inline - SEM CLASSES EXTERNAS
+// Configurações inline - SEM CLASSES
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'brz-rifa');
 define('DB_USER', 'brz-rifa');
