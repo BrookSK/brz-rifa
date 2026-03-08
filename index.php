@@ -63,6 +63,542 @@ function handleRequest() {
         }
     }
     
+    // Rotas de Rifas - Admin
+    if (strpos($request, '/admin/raffles') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new RaffleController();
+        
+        // Listar rifas
+        if ($request === '/admin/raffles' || $request === '/admin/raffles/') {
+            $controller->index();
+            return;
+        }
+        
+        // Limpar notificações
+        if ($request === '/admin/notifications/cleanup') {
+            $controller->cleanup();
+            return;
+        }
+        
+        // Criar rifa
+        if ($request === '/admin/raffles/create') {
+            $controller->create();
+            return;
+        }
+        
+        // Relatório de atividades
+        if ($request === '/admin/audit/activity-report') {
+            $controller->activityReport();
+            return;
+        }
+        
+        // Exportar transações
+        if ($request === '/admin/transactions/export') {
+            $controller->export();
+            return;
+        }
+        
+        // Salvar rifa
+        if ($request === '/admin/raffles/store' && $method === 'POST') {
+            $controller->store();
+            return;
+        }
+        
+        // Exportar CSV
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/export/', $request, $matches)) {
+            $controller->export($matches[1]);
+            return;
+        }
+        
+        // Editar rifa
+        if (preg_match('/\/admin\/raffles\/edit\/(\d+)/', $request, $matches)) {
+            $controller->edit($matches[1]);
+            return;
+        }
+        
+        // Atualizar rifa
+        if (preg_match('/\/admin\/raffles\/update\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->update($matches[1]);
+            return;
+        }
+        
+        // Publicar rifa
+        if (preg_match('/\/admin\/raffles\/publish\/(\d+)/', $request, $matches)) {
+            $controller->publish($matches[1]);
+            return;
+        }
+        
+        // Encerrar rifa
+        if (preg_match('/\/admin\/raffles\/close\/(\d+)/', $request, $matches)) {
+            $controller->close($matches[1]);
+            return;
+        }
+        
+        // Sortear rifa
+        if (preg_match('/\/admin\/raffles\/draw\/(\d+)/', $request, $matches)) {
+            $controller->draw($matches[1]);
+            return;
+        }
+        
+        // Excluir rifa
+        if (preg_match('/\/admin\/raffles\/delete\/(\d+)/', $request, $matches)) {
+            $controller->delete($matches[1]);
+            return;
+        }
+        
+        // Estatísticas
+        if (preg_match('/\/admin\/raffles\/statistics\/(\d+)/', $request, $matches)) {
+            $controller->statistics($matches[1]);
+            return;
+        }
+    }
+    
+    // Rotas Públicas
+    $publicController = new PublicController();
+    
+    // Página inicial
+    if ($request === '/' || $request === '') {
+        $publicController->home();
+        return;
+    }
+    
+    // Detalhes da rifa
+    if (preg_match('/\/raffle\/(\d+)/', $request, $matches)) {
+        $publicController->raffle($matches[1]);
+        return;
+    }
+    
+    // Reservar números
+    if (preg_match('/\/raffle\/(\d+)\/reserve/', $request, $matches) && $method === 'POST') {
+        $publicController->reserve($matches[1]);
+        return;
+    }
+    
+    // Página de pagamento
+    if (preg_match('/\/raffle\/(\d+)\/payment\/([a-f0-9]+)/', $request, $matches)) {
+        $publicController->payment($matches[1], $matches[2]);
+        return;
+    }
+    
+    // Webhook Asaas
+    if ($request === '/webhook/asaas') {
+        $webhookController = new WebhookController();
+        $webhookController->handleAsaas();
+        return;
+    }
+    
+    // Teste webhook
+    if ($request === '/webhook/test') {
+        $webhookController = new WebhookController();
+        $webhookController->test();
+        return;
+    }
+    
+    // Rotas de Participantes - Admin
+    if (strpos($request, '/admin/participants') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new ParticipantController();
+        
+        // Listar participantes
+        if ($request === '/admin/participants' || $request === '/admin/participants/') {
+            $controller->index();
+            return;
+        }
+        
+        // Detalhes do participante
+        if (preg_match('/\/admin\/participants\/details\/([0-9]+)/', $request, $matches)) {
+            $controller->details($matches[1]);
+            return;
+        }
+        
+        // Suspender participante
+        if (preg_match('/\/admin\/participants\/suspend\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->suspend($matches[1]);
+            return;
+        }
+        
+        // Reativar participante
+        if (preg_match('/\/admin\/participants\/reactivate\/(\d+)/', $request, $matches)) {
+            $controller->reactivate($matches[1]);
+            return;
+        }
+        
+        // Bloquear participante
+        if (preg_match('/\/admin\/participants\/block\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->block($matches[1]);
+            return;
+        }
+        
+        // Atualizar score de fraude
+        if (preg_match('/\/admin\/participants\/update-fraud-score\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->updateFraudScore($matches[1]);
+            return;
+        }
+        
+        // Participantes suspeitos
+        if ($request === '/admin/participants/suspicious') {
+            $controller->suspicious();
+            return;
+        }
+    }
+    
+    // Rotas de Números das Rifas - Admin
+    if (strpos($request, '/admin/raffles') === 0 && strpos($request, '/numbers') !== false) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new RaffleNumberController();
+        
+        // Listar números da rifa
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers/', $request, $matches)) {
+            $controller->index($matches[1]);
+            return;
+        }
+        
+        // Detalhes do número
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/(\d+)/', $request, $matches)) {
+            $controller->details($matches[1], $matches[2]);
+            return;
+        }
+        
+        // Limpar reservas expiradas
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/cleanup/', $request, $matches)) {
+            $controller->cleanupReservations($matches[1]);
+            return;
+        }
+        
+        // Marcar como vencedor
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/mark-winner\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->markWinner($matches[1], $matches[2]);
+            return;
+        }
+        
+        // Liberar reserva
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/release\/(\d+)/', $request, $matches)) {
+            $controller->releaseReservation($matches[1], $matches[2]);
+            return;
+        }
+        
+        // Exportar CSV
+        if (preg_match('/\/admin\/raffles\/(\d+)\/numbers\/export/', $request, $matches)) {
+            $controller->export($matches[1]);
+            return;
+        }
+    }
+    
+    // Rotas de Transações - Admin
+    if (strpos($request, '/admin/transactions') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new TransactionController();
+        
+        // Listar transações
+        if ($request === '/admin/transactions' || $request === '/admin/transactions/') {
+            $controller->index();
+            return;
+        }
+        
+        // Detalhes da transação
+        if (preg_match('/admin\/transactions\/(\d+)/', $request, $matches)) {
+            $controller->details($matches[1]);
+            return;
+        }
+        
+        // Verificar status
+        if (preg_match('/admin\/transactions\/check-status\/(\d+)/', $request, $matches)) {
+            $controller->checkStatus($matches[1]);
+            return;
+        }
+        
+        // Cancelar transação
+        if (preg_match('/admin\/transactions\/cancel\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->cancel($matches[1]);
+            return;
+        }
+        
+        // Reembolsar transação
+        if (preg_match('/admin\/transactions\/refund\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->refund($matches[1]);
+            return;
+        }
+        
+        // Conciliar com Asaas
+        if ($request === '/admin/transactions/reconcile') {
+            $controller->reconcile();
+            return;
+        }
+        
+        // Exportar transações
+        if ($request === '/admin/transactions/export') {
+            $controller->export();
+            return;
+        }
+    }
+    
+    // Rotas de Notificações - Admin
+    if (strpos($request, '/admin/notifications') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new NotificationController();
+        
+        // Dashboard de notificações
+        if ($request === '/admin/notifications/dashboard') {
+            $controller->dashboard();
+            return;
+        }
+        
+        // Listar notificações
+        if ($request === '/admin/notifications' || $request === '/admin/notifications/') {
+            $controller->index();
+            return;
+        }
+        
+        // Detalhes da notificação
+        if (preg_match('/admin\/notifications\/(\d+)/', $request, $matches)) {
+            $controller->details($matches[1]);
+            return;
+        }
+        
+        // Criar notificação
+        if ($request === '/admin/notifications/create') {
+            $controller->create();
+            return;
+        }
+        
+        // Reenviar notificação
+        if (preg_match('/admin\/notifications\/resend\/(\d+)/', $request, $matches) && $method === 'POST') {
+            $controller->resend($matches[1]);
+            return;
+        }
+        
+        // Processar fila
+        if ($request === '/admin/notifications/process-queue') {
+            $controller->processQueue();
+            return;
+        }
+        
+        // Testar notificação
+        if ($request === '/admin/notifications/test') {
+            $controller->test();
+            return;
+        }
+        
+        // Limpar notificações
+        if ($request === '/admin/notifications/cleanup') {
+            $controller->cleanup();
+            return;
+        }
+    }
+    
+    // Rotas de Relatórios - Admin
+    if (strpos($request, '/admin/reports') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new ReportController();
+        
+        // Dashboard de relatórios
+        if ($request === '/admin/reports/dashboard') {
+            $controller->dashboard();
+            return;
+        }
+        
+        // Listar relatórios
+        if ($request === '/admin/reports' || $request === '/admin/reports/') {
+            $controller->index();
+            return;
+        }
+        
+        // Relatório de rifas
+        if ($request === '/admin/reports/raffles') {
+            $controller->rafflesReport();
+            return;
+        }
+        
+        // Relatório financeiro
+        if ($request === '/admin/reports/financial') {
+            $controller->financialReport();
+            return;
+        }
+        
+        // Relatório de participantes
+        if ($request === '/admin/reports/participants') {
+            $controller->participantsReport();
+            return;
+        }
+        
+        // Relatório de auditoria
+        if ($request === '/admin/reports/audit') {
+            $controller->auditReport();
+            return;
+        }
+        
+        // Relatório de sistema
+        if ($request === '/admin/reports/system') {
+            $controller->systemReport();
+            return;
+        }
+        
+        // Relatório de uso
+        if ($request === '/admin/reports/usage') {
+            $controller->usageReport();
+            return;
+        }
+        
+        // Relatório de performance
+        if ($request === '/admin/reports/performance') {
+            $controller->performanceReport();
+            return;
+        }
+        
+        // Relatório consolidado
+        if ($request === '/admin/reports/consolidated') {
+            $controller->consolidatedReport();
+            return;
+        }
+        
+        // Exportar relatório
+        if (preg_match('/\/admin\/reports\/export\/(\w+)/', $request, $matches)) {
+            $controller->export($matches[1]);
+            return;
+        }
+        
+        // Gerar relatório específico
+        if (preg_match('/\/admin\/reports\/generate\/(\w+)/', $request, $matches)) {
+            $controller->generate($matches[1]);
+            return;
+        }
+        
+        // Detalhes do relatório
+        if (preg_match('/\/admin\/reports\/(\d+)/', $request, $matches)) {
+            $controller->details($matches[1]);
+            return;
+        }
+    }
+    
+    // Rotas de Integrações - Admin
+    if (strpos($request, '/admin/integrations') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new IntegrationController();
+        
+        // Dashboard de integrações
+        if ($request === '/admin/integrations/dashboard') {
+            $controller->dashboard();
+            return;
+        }
+        
+        // Logs de integração
+        if ($request === '/admin/integrations/logs') {
+            $controller->logs();
+            return;
+        }
+        
+        // Testar todas as integrações
+        if ($request === '/admin/integrations/test-all') {
+            $controller->testAll();
+            return;
+        }
+        
+        // Testar integração específica
+        if (preg_match('/\/admin\/integrations\/test\/(\w+)/', $request, $matches)) {
+            $controller->test($matches[1]);
+            return;
+        }
+        
+        // Configurar integrações
+        if ($request === '/admin/integrations/config') {
+            $controller->config();
+            return;
+        }
+        
+        // Sincronizar dados
+        if ($request === '/admin/integrations/sync') {
+            $controller->sync();
+            return;
+        }
+        
+        // Relatório de integrações
+        if ($request === '/admin/integrations/report') {
+            $controller->report();
+            return;
+        }
+        
+        // Limpar logs
+        if ($request === '/admin/integrations/cleanup') {
+            $controller->cleanup();
+            return;
+        }
+        
+        // Validar webhook
+        if ($request === '/admin/integrations/validate-webhook') {
+            $controller->validateWebhook();
+            return;
+        }
+    }
+    
+    // Rotas Públicas
+    $publicController = new PublicController();
+    
+    // Página inicial
+    if ($request === '/' || $request === '') {
+        $publicController->home();
+        return;
+    }
+    
+    // Detalhes da rifa
+    if (preg_match('/\/raffle\/(\d+)/', $request, $matches)) {
+        $publicController->raffle($matches[1]);
+        return;
+    }
+    
+    // Reservar números
+    if (preg_match('/\/raffle\/(\d+)\/reserve/', $request, $matches) && $method === 'POST') {
+        $publicController->reserve($matches[1]);
+        return;
+    }
+    
+    // Página de pagamento
+    if (preg_match('/\/raffle\/(\d+)\/payment\/([a-f0-9]+)/', $request, $matches)) {
+        $publicController->payment($matches[1], $matches[2]);
+        return;
+    }
+    
+    // Webhook Asaas
+    if ($request === '/webhook/asaas') {
+        $webhookController = new WebhookController();
+        $webhookController->handleAsaas();
+        return;
+    }
+    
+    // Teste webhook
+    if ($request === '/webhook/test') {
+        $webhookController = new WebhookController();
+        $webhookController->test();
+        return;
+    }
+    
     // Dashboard
     if ($request === '/admin/dashboard') {
         if (!isset($_SESSION['logged_in'])) {
@@ -83,8 +619,9 @@ function handleRequest() {
         return;
     }
     
-    // Home page
-    showHome();
+    // 404
+    http_response_code(404);
+    echo '<h1>Página não encontrada</h1>';
 }
 
 function showHome() {

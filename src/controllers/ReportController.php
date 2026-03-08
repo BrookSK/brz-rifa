@@ -177,10 +177,11 @@ class ReportController {
                     COUNT(*) as total_numbers,
                     SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_numbers,
                     SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) as reserved_numbers,
-                    SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available_numbers,
-                    SUM(CASE WHEN status = 'paid' THEN payment_amount ELSE 0 END) as total_revenue,
+                    SUM(CASE status = 'available' THEN 1 ELSE 0 END) as available_numbers,
+                    SUM(CASE status = 'paid' THEN payment_amount ELSE 0 END) as total_revenue,
+                    AVG(CASE WHEN status = 'paid' THEN payment_amount ELSE NULL END) as avg_ticket_value,
                     COUNT(DISTINCT participant_cpf) as unique_participants,
-                    AVG(CASE WHEN status = 'paid' THEN payment_amount ELSE NULL END) as avg_ticket
+                    MAX(updated_at) as last_activity
                 FROM raffle_numbers 
                 WHERE raffle_id = ?";
         
@@ -193,16 +194,20 @@ class ReportController {
      */
     private function getFinancialData($startDate, $endDate) {
         $sql = "SELECT DATE(t.created_at) as date,
-                       COUNT(*) as transactions_count,
-                       SUM(t.amount) as total_amount,
-                       SUM(CASE WHEN t.payment_status = 'confirmed' THEN t.amount ELSE 0 END) as confirmed_amount,
-                       SUM(CASE WHEN t.payment_status = 'pending' THEN t.amount ELSE 0 END) as pending_amount
+                    COUNT(*) as transactions_count,
+                    SUM(t.amount) as total_amount,
+                    SUM(CASE WHEN t.payment_status = 'confirmed' THEN t.amount ELSE 0 END) as confirmed_amount,
+                    SUM(CASE t.payment_status = 'pending' THEN t.amount ELSE 0 END) as pending_amount,
+                    COUNT(DISTINCT participant_id) as unique_participants,
+                    COUNT(DISTINCT raffle_id) as unique_raffles
                 FROM transactions t
                 WHERE DATE(t.created_at) BETWEEN ? AND ?
                 GROUP BY DATE(t.created_at)
-                ORDER BY date";
+                ORDER BY DATE(t.created_at)";
         
-        $stmt = $this->db->query($sql, [$startDate, $endDate]);
+        $params = [$startDate, $endDate];
+        
+        $stmt = $this->db->query($sql, $params);
         return $stmt->fetchAll();
     }
     
@@ -211,14 +216,17 @@ class ReportController {
      */
     private function getAsaasData($startDate, $endDate) {
         $sql = "SELECT DATE(created_at) as date,
-                       COUNT(*) as webhooks_count,
-                       SUM(CASE WHEN processed = 1 THEN 1 ELSE 0 END) as processed_count
+                    COUNT(*) as webhooks_count,
+                    SUM(CASE processed = 1 THEN 1 ELSE 0 END) as processed_count,
+                    COUNT(*) as total_count
                 FROM webhook_logs
                 WHERE DATE(created_at) BETWEEN ? AND ?
                 GROUP BY DATE(created_at)
-                ORDER BY date";
+                ORDER BY DATE(created_at)";
         
-        $stmt = $this->db->query($sql, [$startDate, $endDate]);
+        $params = [$startDate, $endDate];
+        
+        $stmt = $this->db->query($sql, $params);
         return $stmt->fetchAll();
     }
     
@@ -229,7 +237,9 @@ class ReportController {
         $sql = "SELECT al.*, u.name as user_name
                 FROM audit_logs al
                 LEFT JOIN users u ON al.user_id = u.id
-                WHERE DATE(al.created_at) BETWEEN ? AND ?";
+                WHERE DATE(al.created_at) BETWEEN ? AND ?
+                GROUP BY DATE(al.created_at)
+                ORDER BY al.created_at DESC";
         
         $params = [$startDate, $endDate];
         
@@ -242,8 +252,6 @@ class ReportController {
             $sql .= " AND al.action = ?";
             $params[] = $action;
         }
-        
-        $sql .= " ORDER BY al.created_at DESC LIMIT 1000";
         
         $stmt = $this->db->query($sql, $params);
         return $stmt->fetchAll();
