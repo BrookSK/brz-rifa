@@ -30,6 +30,27 @@ function getDBConnection() {
     }
 }
 
+// Incluir todos os models necessários
+require_once 'src/models/Raffle.php';
+require_once 'src/models/Participant.php';
+require_once 'src/models/RaffleNumber.php';
+require_once 'src/models/Transaction.php';
+require_once 'src/models/AuditLog.php';
+require_once 'src/models/Notification.php';
+require_once 'src/models/Report.php';
+require_once 'src/models/Integration.php';
+
+// Incluir todos os controllers necessários
+require_once 'src/controllers/RaffleController.php';
+require_once 'src/controllers/ParticipantController.php';
+require_once 'src/controllers/RaffleNumberController.php';
+require_once 'src/controllers/TransactionController.php';
+require_once 'src/controllers/AuditController.php';
+require_once 'src/controllers/NotificationController.php';
+require_once 'src/controllers/ReportController.php';
+require_once 'src/controllers/IntegrationController.php';
+require_once 'src/controllers/PublicController.php';
+
 // Router simples - SEM CLASSE ROUTER
 function handleRequest() {
     $request = strtok($_SERVER['REQUEST_URI'], '?');
