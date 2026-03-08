@@ -633,7 +633,7 @@ class Report {
             if ($row2) {
                 $growth[] = [
                     'date' => $row1['date'],
-                    'growth_rate' => $row2['count'] > 0 ? (($row2['count'] - $row1['count']) / $row1['count'] * 100 : 0
+                    'growth_rate' => $row2['count'] > 0 ? (($row2['count'] - $row1['count']) / $row1['count'] * 100) : 0
                 ];
             } else {
                 $growth[] = [

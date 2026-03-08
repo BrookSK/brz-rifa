@@ -39,6 +39,7 @@ require_once 'src/models/AuditLog.php';
 require_once 'src/models/Notification.php';
 require_once 'src/models/Report.php';
 require_once 'src/models/Integration.php';
+require_once 'src/models/Draw.php';
 
 // Incluir todos os controllers necessários
 require_once 'src/controllers/RaffleController.php';
@@ -50,6 +51,7 @@ require_once 'src/controllers/NotificationController.php';
 require_once 'src/controllers/ReportController.php';
 require_once 'src/controllers/IntegrationController.php';
 require_once 'src/controllers/PublicController.php';
+require_once 'src/controllers/DrawController.php';
 
 // Router simples - SEM CLASSE ROUTER
 function handleRequest() {
@@ -575,6 +577,76 @@ function handleRequest() {
         // Validar webhook
         if ($request === '/admin/integrations/validate-webhook') {
             $controller->validateWebhook();
+            return;
+        }
+    }
+    
+    // Rotas de Sorteios - Admin
+    if (strpos($request, '/admin/draws') === 0) {
+        if (!isset($_SESSION['logged_in'])) {
+            header('Location: /admin');
+            exit;
+        }
+        
+        $controller = new DrawController();
+        
+        // Dashboard de sorteios
+        if ($request === '/admin/draws/dashboard') {
+            $controller->dashboard();
+            return;
+        }
+        
+        // Histórico de sorteios
+        if ($request === '/admin/draws/history') {
+            $controller->history();
+            return;
+        }
+        
+        // Realizar sorteio manual
+        if ($request === '/admin/draws/perform') {
+            $controller->perform();
+            return;
+        }
+        
+        // Verificar integridade do sorteio
+        if ($request === '/admin/draws/verify') {
+            $controller->verify();
+            return;
+        }
+        
+        // Agendar sorteio
+        if ($request === '/admin/draws/schedule') {
+            $controller->schedule();
+            return;
+        }
+        
+        // Executar sorteios agendados
+        if ($request === '/admin/draws/execute-scheduled') {
+            $controller->executeScheduled();
+            return;
+        }
+        
+        // Cancelar sorteio
+        if ($request === '/admin/draws/cancel') {
+            $controller->cancel();
+            return;
+        }
+        
+        // Reexecutar sorteio
+        if ($request === '/admin/draws/redraw') {
+            $controller->redraw();
+            return;
+        }
+        
+        // Relatório de sorteios
+        if ($request === '/admin/draws/report') {
+            $controller->report();
+            return;
+        }
+        
+        // Limpar sorteios antigos
+        if ($request === '/admin/draws/cleanup') {
+            $controller->cleanup();
             return;
         }
     }
