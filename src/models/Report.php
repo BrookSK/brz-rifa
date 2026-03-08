@@ -876,7 +876,7 @@ class Report {
         
         // Calcular taxas de crescimento
         $previousPeriod = [
-            'from' => date('Y-m-d', strtotime($dateFrom . ' - 1 month'),
+            'from' => date('Y-m-d', strtotime($dateFrom . ' - 1 month')),
             'to' => date('Y-m-d', strtotime($dateTo . ' - 1 month'))
         ];
         
