@@ -415,6 +415,24 @@ class ReportController {
     }
     
     /**
+     * Obter relatórios gerados
+     */
+    public function getGeneratedReports() {
+        $this->requireAuth();
+        
+        $sql = "SELECT gr.*, u.name as generated_by_name
+                FROM generated_reports gr
+                LEFT JOIN users u ON gr.generated_by = u.id
+                ORDER BY gr.generated_at DESC
+                LIMIT 50";
+        
+        $stmt = $this->db->query($sql);
+        $reports = $stmt->fetchAll();
+        
+        $this->jsonResponse(['success' => true, 'reports' => $reports]);
+    }
+    
+    /**
      * Resposta JSON
      */
     private function jsonResponse($data, $statusCode = 200) {
