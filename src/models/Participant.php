@@ -95,41 +95,6 @@ class Participant {
     }
     
     /**
-     * Listar participantes
-     */
-    public function getAll($page = 1, $limit = 20, $status = null, $search = null) {
-        $offset = ($page - 1) * $limit;
-        
-        $sql = "SELECT * FROM participants";
-        $params = [];
-        $where = [];
-        
-        if ($status) {
-            $where[] = "status = ?";
-            $params[] = $status;
-        }
-        
-        if ($search) {
-            $where[] = "(cpf LIKE ? OR name LIKE ? OR email LIKE ?)";
-            $searchParam = "%$search%";
-            $params[] = $searchParam;
-            $params[] = $searchParam;
-            $params[] = $searchParam;
-        }
-        
-        if (!empty($where)) {
-            $sql .= " WHERE " . implode(' AND ', $where);
-        }
-        
-        $sql .= " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-        $params[] = $limit;
-        $params[] = $offset;
-        
-        $stmt = $this->db->query($sql, $params);
-        return $stmt->fetchAll();
-    }
-    
-    /**
      * Validar CPF
      */
     private function isValidCPF($cpf) {

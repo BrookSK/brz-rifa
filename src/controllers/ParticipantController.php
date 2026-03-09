@@ -1,636 +1,611 @@
 <?php
 /**
- * Controller para gerenciar participantes no painel administrativo
+ * Controller para gestão de participantes
  */
 
 class ParticipantController {
     private $db;
-    private $participantModel;
     
     public function __construct() {
-        $this->db = getDBConnection();
-        $this->participantModel = new Participant($this->db);
+        $this->db = new Database();
     }
     
     /**
-     * Listar participantes
+     * Exibir página de participantes
      */
     public function index() {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
+        // Verificar permissão
+        if (!isset($_SESSION['user_id'])) {
+            header('Location: /login');
             exit;
         }
         
-        $page = $_GET['page'] ?? 1;
-        $status = $_GET['status'] ?? null;
-        $search = $_GET['search'] ?? null;
+        // Apenas Admin e Operador podem acessar
+        if ($_SESSION['user_profile'] === 'auditor') {
+            header('Location: /admin/reports');
+            exit;
+        }
+        
+        include SRC_PATH . '/views/admin/participants/index.php';
+    }
+    
+    /**
+     * API: Obter participantes com filtros e paginação
+     */
+    public function getParticipants() {
+        header('Content-Type: application/json');
         
         try {
-            $participants = $this->participantModel->getAll($page, 20, $status, $search);
-            $this->showParticipantList($participants, $page, $status, $search);
+            $page = max(1, intval($_GET['page'] ?? 1));
+            $limit = 20;
+            $offset = ($page - 1) * $limit;
+            
+            // Construir WHERE
+            $where = ['1=1'];
+            $params = [];
+            
+            // Filtro de status
+            if (!empty($_GET['status'])) {
+                $where[] = 'p.status = ?';
+                $params[] = $_GET['status'];
+            }
+            
+            // Filtro de rifa
+            if (!empty($_GET['raffle_id'])) {
+                $where[] = 'EXISTS (SELECT 1 FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.raffle_id = ?)';
+                $params[] = $_GET['raffle_id'];
+            }
+            
+            // Filtro de busca
+            if (!empty($_GET['search'])) {
+                $where[] = '(p.name LIKE ? OR p.cpf LIKE ? OR p.email LIKE ?)';
+                $search = '%' . $_GET['search'] . '%';
+                $params[] = $search;
+                $params[] = $search;
+                $params[] = $search;
+            }
+            
+            // Filtro de score de fraude
+            if (!empty($_GET['fraud_score'])) {
+                $range = explode('-', $_GET['fraud_score']);
+                if (count($range) == 2) {
+                    $where[] = 'p.fraud_score BETWEEN ? AND ?';
+                    $params[] = $range[0];
+                    $params[] = $range[1];
+                }
+            }
+            
+            $whereClause = implode(' AND ', $where);
+            
+            // Obter participantes com estatísticas
+            $sql = "SELECT p.*, 
+                           (SELECT COUNT(DISTINCT rn.raffle_id) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_raffles,
+                           (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_numbers,
+                           (SELECT SUM(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as total_spent,
+                           (SELECT AVG(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as avg_ticket
+                    FROM participants p
+                    WHERE $whereClause
+                    ORDER BY p.created_at DESC
+                    LIMIT ? OFFSET ?";
+            
+            $params[] = $limit;
+            $params[] = $offset;
+            
+            $stmt = $this->db->query($sql, $params);
+            $participants = $stmt->fetchAll();
+            
+            // Obter total
+            $sql = "SELECT COUNT(*) as total FROM participants p WHERE $whereClause";
+            $stmt = $this->db->query($sql, array_slice($params, 0, -2));
+            $total = $stmt->fetch()['total'];
+            
+            // Paginação
+            $totalPages = ceil($total / $limit);
+            
+            echo json_encode([
+                'success' => true,
+                'participants' => $participants,
+                'pagination' => [
+                    'current_page' => $page,
+                    'total_pages' => $totalPages,
+                    'total_items' => $total,
+                    'per_page' => $limit
+                ]
+            ]);
+            
         } catch (Exception $e) {
-            $this->showError($e->getMessage());
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
     }
     
     /**
-     * Detalhes do participante
+     * API: Obter participante específico
      */
-    public function details($cpf) {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
+    public function getParticipant($participantId) {
+        header('Content-Type: application/json');
         
         try {
-            $participant = $this->participantModel->getByCpf($cpf);
+            $sql = "SELECT p.*, 
+                           (SELECT COUNT(DISTINCT rn.raffle_id) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_raffles,
+                           (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_numbers,
+                           (SELECT SUM(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as total_spent,
+                           (SELECT AVG(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as avg_ticket
+                    FROM participants p
+                    WHERE p.id = ?";
+            
+            $stmt = $this->db->query($sql, [$participantId]);
+            $participant = $stmt->fetch();
+            
             if (!$participant) {
                 throw new Exception("Participante não encontrado");
             }
             
-            $statistics = $this->participantModel->getStatistics($participant['id']);
-            $history = $this->participantModel->getHistory($cpf);
-            
-            $this->showParticipantDetails($participant, $statistics, $history);
+            echo json_encode(['success' => true, 'participant' => $participant]);
             
         } catch (Exception $e) {
-            $this->showError($e->getMessage());
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
     }
     
     /**
-     * Suspender participante
+     * API: Obter estatísticas de participantes
      */
-    public function suspend($id) {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
-        
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header('Location: /admin/participants');
-            exit;
-        }
+    public function getParticipantStats() {
+        header('Content-Type: application/json');
         
         try {
-            $reason = $_POST['reason'] ?? 'Motivo não informado';
-            $this->participantModel->suspend($id, $reason);
+            $sql = "SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+                        SUM(CASE WHEN status = 'suspicious' THEN 1 ELSE 0 END) as suspicious,
+                        SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) as suspended,
+                        SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked
+                    FROM participants";
             
-            $_SESSION['success'] = "Participante suspenso com sucesso!";
+            $stmt = $this->db->query($sql);
+            $stats = $stmt->fetch();
+            
+            echo json_encode(['success' => true, 'stats' => $stats]);
+            
         } catch (Exception $e) {
-            $_SESSION['error'] = $e->getMessage();
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        header('Location: /admin/participants');
-        exit;
     }
     
     /**
-     * Reativar participante
+     * API: Obter histórico do participante
      */
-    public function reactivate($id) {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
+    public function getParticipantHistory($cpf) {
+        header('Content-Type: application/json');
         
         try {
-            $this->participantModel->reactivate($id);
-            $_SESSION['success'] = "Participante reativado com sucesso!";
+            $sql = "SELECT rn.*, r.title as raffle_title, r.status as raffle_status
+                    FROM raffle_numbers rn
+                    LEFT JOIN raffles r ON rn.raffle_id = r.id
+                    WHERE rn.participant_cpf = ?
+                    ORDER BY rn.created_at DESC
+                    LIMIT 50";
+            
+            $stmt = $this->db->query($sql, [$cpf]);
+            $history = $stmt->fetchAll();
+            
+            echo json_encode(['success' => true, 'history' => $history]);
+            
         } catch (Exception $e) {
-            $_SESSION['error'] = $e->getMessage();
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        header('Location: /admin/participants');
-        exit;
     }
     
     /**
-     * Bloquear participante
+     * API: Suspender participante
      */
-    public function block($id) {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
-        
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header('Location: /admin/participants');
-            exit;
-        }
+    public function suspendParticipant($participantId) {
+        header('Content-Type: application/json');
         
         try {
-            $reason = $_POST['reason'] ?? 'Motivo não informado';
-            $this->participantModel->block($id, $reason);
+            $data = json_decode(file_get_contents('php://input'), true);
+            $reason = $data['reason'] ?? '';
             
-            $_SESSION['success'] = "Participante bloqueado com sucesso!";
+            if (empty($reason)) {
+                throw new Exception("Motivo da suspensão é obrigatório");
+            }
+            
+            // Obter participante
+            $participant = $this->getParticipantById($participantId);
+            if (!$participant) {
+                throw new Exception("Participante não encontrado");
+            }
+            
+            if ($participant['status'] === 'blocked') {
+                throw new Exception("Participante já está bloqueado");
+            }
+            
+            // Suspender participante
+            $participantModel = new Participant($this->db);
+            $participantModel->suspend($participantId, $reason);
+            
+            echo json_encode(['success' => true]);
+            
         } catch (Exception $e) {
-            $_SESSION['error'] = $e->getMessage();
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        header('Location: /admin/participants');
-        exit;
     }
     
     /**
-     * Atualizar score de fraude
+     * API: Bloquear participante
      */
-    public function updateFraudScore($id) {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
-        
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header('Location: /admin/participants');
-            exit;
-        }
+    public function blockParticipant($participantId) {
+        header('Content-Type: application/json');
         
         try {
-            $score = intval($_POST['fraud_score'] ?? 0);
-            $this->participantModel->updateFraudScore($id, $score);
+            $data = json_decode(file_get_contents('php://input'), true);
+            $reason = $data['reason'] ?? '';
             
-            $_SESSION['success'] = "Score de fraude atualizado com sucesso!";
+            if (empty($reason)) {
+                throw new Exception("Motivo do bloqueio é obrigatório");
+            }
+            
+            // Obter participante
+            $participant = $this->getParticipantById($participantId);
+            if (!$participant) {
+                throw new Exception("Participante não encontrado");
+            }
+            
+            // Bloquear participante
+            $participantModel = new Participant($this->db);
+            $participantModel->block($participantId, $reason);
+            
+            echo json_encode(['success' => true]);
+            
         } catch (Exception $e) {
-            $_SESSION['error'] = $e->getMessage();
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        header('Location: /admin/participants');
-        exit;
     }
     
     /**
-     * Listar participantes suspeitos
+     * API: Reativar participante
      */
-    public function suspicious() {
-        if (!isset($_SESSION['logged_in'])) {
-            header('Location: /admin');
-            exit;
-        }
+    public function reactivateParticipant($participantId) {
+        header('Content-Type: application/json');
         
         try {
-            $participants = $this->participantModel->getSuspiciousParticipants(50);
-            $this->showSuspiciousParticipants($participants);
-        } catch (Exception $e) {
-            $this->showError($e->getMessage());
-        }
-    }
-    
-    /**
-     * Exibir lista de participantes
-     */
-    private function showParticipantList($participants, $page, $status, $search) {
-        $error = $_SESSION['error'] ?? '';
-        $success = $_SESSION['success'] ?? '';
-        unset($_SESSION['error'], $_SESSION['success']);
-        
-        echo '<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Participantes - ' . SITE_NAME . '</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: "Segoe UI", Arial, sans-serif; background: #f8f9fa; }
-        .header { background: linear-gradient(45deg, #2c3e50, #34495e); color: white; padding: 20px 0; box-shadow: 0 5px 20px rgba(0,0,0,0.1); }
-        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .actions { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn-warning { background: #f39c12; color: white; }
-        .btn-danger { background: #e74c3c; color: white; }
-        .btn-success { background: #27ae60; color: white; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        .filter input, .filter select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; }
-        .table { background: white; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); overflow: hidden; }
-        .table table { width: 100%; border-collapse: collapse; }
-        .table th { background: #f8f9fa; padding: 15px; text-align: left; font-weight: 600; color: #2c3e50; border-bottom: 2px solid #e9ecef; }
-        .table td { padding: 15px; border-bottom: 1px solid #e9ecef; }
-        .table tr:hover { background: #f8f9fa; }
-        .status-badge { padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
-        .status-active { background: #d4edda; color: #155724; }
-        .status-suspended { background: #fff3cd; color: #856404; }
-        .status-blocked { background: #f8d7da; color: #721c24; }
-        .status-suspicious { background: #d1ecf1; color: #0c5460; }
-        .fraud-score { font-weight: bold; }
-        .fraud-low { color: #27ae60; }
-        .fraud-medium { color: #f39c12; }
-        .fraud-high { color: #e74c3c; }
-        .actions-cell { display: flex; gap: 5px; flex-wrap: wrap; }
-        .alert { padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-        .alert-success { background: #d4edda; color: #155724; }
-        .alert-error { background: #f8d7da; color: #721c24; }
-        .logout-btn { background: #e74c3c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 25px; transition: all 0.3s; }
-        .logout-btn:hover { background: #c0392b; transform: translateY(-2px); }
-        @media (max-width: 768px) { .header-content { flex-direction: column; gap: 15px; } .actions { flex-direction: column; align-items: stretch; } .filter { flex-direction: column; } }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="header-content">
-            <div>
-                <h1>🎯 ' . SITE_NAME . '</h1>
-                <small>Gestão de Participantes</small>
-            </div>
-            <a href="/logout" class="logout-btn">🚪 Sair</a>
-        </div>
-    </div>
-    
-    <div class="container">
-        ' . ($error ? '<div class="alert alert-error">❌ ' . htmlspecialchars($error) . '</div>' : '') . '
-        ' . ($success ? '<div class="alert alert-success">✅ ' . htmlspecialchars($success) . '</div>' : '') . '
-        
-        <div class="actions">
-            <div>
-                <h2>👥 Lista de Participantes</h2>
-            </div>
-            <div>
-                <a href="/admin/participants/suspicious" class="btn btn-warning">⚠️ Suspeitos</a>
-                <a href="/admin/dashboard" class="btn">📊 Dashboard</a>
-            </div>
-        </div>
-        
-        <div class="filter">
-            <form method="GET" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                <input type="text" name="search" placeholder="Buscar CPF, nome ou e-mail" value="' . htmlspecialchars($search ?? '') . '">
-                <select name="status">
-                    <option value="">Todos</option>
-                    <option value="active" ' . (($status ?? '') === 'active' ? 'selected' : '') . '>Ativos</option>
-                    <option value="suspended" ' . (($status ?? '') === 'suspended' ? 'selected' : '') . '>Suspensos</option>
-                    <option value="blocked" ' . (($status ?? '') === 'blocked' ? 'selected' : '') . '>Bloqueados</option>
-                    <option value="suspicious" ' . (($status ?? '') === 'suspicious' ? 'selected' : '') . '>Suspeitos</option>
-                </select>
-                <button type="submit" class="btn btn-primary">🔍 Filtrar</button>
-            </form>
-        </div>
-        
-        <div class="table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>CPF</th>
-                        <th>Nome</th>
-                        <th>E-mail</th>
-                        <th>Telefone</th>
-                        <th>Score Fraude</th>
-                        <th>Status</th>
-                        <th>Cadastro</th>
-                        <th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>';
-        
-        foreach ($participants as $participant) {
-            $fraudClass = $participant['fraud_score'] <= 30 ? 'fraud-low' : 
-                          ($participant['fraud_score'] <= 60 ? 'fraud-medium' : 'fraud-high');
-            
-            echo '<tr>
-                <td>' . htmlspecialchars($participant['cpf']) . '</td>
-                <td>' . htmlspecialchars($participant['name']) . '</td>
-                <td>' . htmlspecialchars($participant['email']) . '</td>
-                <td>' . htmlspecialchars($participant['phone'] ?? '-') . '</td>
-                <td><span class="fraud-score ' . $fraudClass . '">' . $participant['fraud_score'] . '</span></td>
-                <td>
-                    <span class="status-badge status-' . $participant['status'] . '">' . $this->getStatusLabel($participant['status']) . '</span>
-                </td>
-                <td>' . date('d/m/Y', strtotime($participant['created_at'])) . '</td>
-                <td>
-                    <div class="actions-cell">
-                        <a href="/admin/participants/details/' . $participant['cpf'] . '" class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;">📊</a>';
+            // Obter participante
+            $participant = $this->getParticipantById($participantId);
+            if (!$participant) {
+                throw new Exception("Participante não encontrado");
+            }
             
             if ($participant['status'] === 'active') {
-                echo '<a href="/admin/participants/suspend/' . $participant['id'] . '" class="btn btn-warning" style="padding: 5px 10px; font-size: 12px;" onclick="return confirm(\'Suspender participante?\')">⏸️</a>';
+                throw new Exception("Participante já está ativo");
             }
             
-            if (in_array($participant['status'], ['suspended', 'suspicious'])) {
-                echo '<a href="/admin/participants/reactivate/' . $participant['id'] . '" class="btn btn-success" style="padding: 5px 10px; font-size: 12px;">✅</a>';
+            // Reativar participante
+            $participantModel = new Participant($this->db);
+            $participantModel->reactivate($participantId);
+            
+            echo json_encode(['success' => true]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * API: Obter participantes suspeitos
+     */
+    public function getSuspiciousParticipants() {
+        header('Content-Type: application/json');
+        
+        try {
+            $limit = intval($_GET['limit'] ?? 50);
+            
+            $sql = "SELECT p.*, 
+                           (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_numbers
+                    FROM participants p 
+                    WHERE p.fraud_score > 50 OR p.status = 'suspicious'
+                    ORDER BY p.fraud_score DESC, p.created_at DESC 
+                    LIMIT ?";
+            
+            $stmt = $this->db->query($sql, [$limit]);
+            $participants = $stmt->fetchAll();
+            
+            echo json_encode(['success' => true, 'participants' => $participants]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * API: Exportar participantes
+     */
+    public function exportParticipants() {
+        try {
+            // Construir WHERE (mesma lógica do getParticipants)
+            $where = ['1=1'];
+            $params = [];
+            
+            if (!empty($_GET['status'])) {
+                $where[] = 'p.status = ?';
+                $params[] = $_GET['status'];
             }
             
-            if ($participant['status'] !== 'blocked') {
-                echo '<a href="/admin/participants/block/' . $participant['id'] . '" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="return confirm(\'Bloquear participante?\')">🚫</a>';
+            if (!empty($_GET['raffle_id'])) {
+                $where[] = 'EXISTS (SELECT 1 FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.raffle_id = ?)';
+                $params[] = $_GET['raffle_id'];
             }
             
-            echo '</div></td></tr>';
-        }
-        
-        echo '</tbody>
-            </table>
-        </div>
-        
-        <div style="margin-top: 20px; text-align: center;">
-            <a href="/admin/participants?page=' . max(1, $page - 1) . '" class="btn">← Anterior</a>
-            <span style="margin: 0 20px;">Página ' . $page . '</span>
-            <a href="/admin/participants?page=' . ($page + 1) . '" class="btn">Próximo →</a>
-        </div>
-    </div>
-</body>
-</html>';
-    }
-    
-    /**
-     * Exibir detalhes do participante
-     */
-    private function showParticipantDetails($participant, $statistics, $history) {
-        echo '<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>' . htmlspecialchars($participant['name']) . ' - ' . SITE_NAME . '</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: "Segoe UI", Arial, sans-serif; background: #f8f9fa; }
-        .header { background: linear-gradient(45deg, #2c3e50, #34495e); color: white; padding: 20px 0; box-shadow: 0 5px 20px rgba(0,0,0,0.1); }
-        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .participant-card { background: white; border-radius: 15px; padding: 30px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px; }
-        .info-item { padding: 15px; background: #f8f9fa; border-radius: 10px; }
-        .info-label { font-weight: 600; color: #2c3e50; margin-bottom: 5px; }
-        .info-value { color: #666; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px; }
-        .stat-card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); text-align: center; }
-        .stat-value { font-size: 2em; font-weight: bold; color: #3498db; margin-bottom: 10px; }
-        .stat-label { color: #666; }
-        .history-table { background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 5px 20px rgba(0,0,0,0.1); }
-        .history-table table { width: 100%; border-collapse: collapse; }
-        .history-table th { background: #f8f9fa; padding: 15px; text-align: left; font-weight: 600; color: #2c3e50; }
-        .history-table td { padding: 15px; border-bottom: 1px solid #e9ecef; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn-warning { background: #f39c12; color: white; }
-        .btn-danger { background: #e74c3c; color: white; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .status-badge { padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
-        .status-active { background: #d4edda; color: #155724; }
-        .status-suspended { background: #fff3cd; color: #856404; }
-        .status-blocked { background: #f8d7da; color: #721c24; }
-        .fraud-score { font-weight: bold; }
-        .fraud-low { color: #27ae60; }
-        .fraud-medium { color: #f39c12; }
-        .fraud-high { color: #e74c3c; }
-        .logout-btn { background: #e74c3c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 25px; transition: all 0.3s; }
-        .logout-btn:hover { background: #c0392b; transform: translateY(-2px); }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="header-content">
-            <div>
-                <h1>🎯 ' . SITE_NAME . '</h1>
-                <small>Detalhes do Participante</small>
-            </div>
-            <a href="/logout" class="logout-btn">🚪 Sair</a>
-        </div>
-    </div>
-    
-    <div class="container">
-        <div class="participant-card">
-            <h2 style="color: #2c3e50; margin-bottom: 20px;">👥 ' . htmlspecialchars($participant['name']) . '</h2>
+            if (!empty($_GET['search'])) {
+                $where[] = '(p.name LIKE ? OR p.cpf LIKE ? OR p.email LIKE ?)';
+                $search = '%' . $_GET['search'] . '%';
+                $params[] = $search;
+                $params[] = $search;
+                $params[] = $search;
+            }
             
-            <div class="info-grid">
-                <div class="info-item">
-                    <div class="info-label">CPF</div>
-                    <div class="info-value">' . htmlspecialchars($participant['cpf']) . '</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">E-mail</div>
-                    <div class="info-value">' . htmlspecialchars($participant['email']) . '</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Telefone</div>
-                    <div class="info-value">' . htmlspecialchars($participant['phone'] ?? '-') . '</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Endereço</div>
-                    <div class="info-value">' . htmlspecialchars($participant['address'] ?? '-') . '</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Score de Fraude</div>
-                    <div class="info-value fraud-score ' . ($statistics['fraud_score'] <= 30 ? 'fraud-low' : ($statistics['fraud_score'] <= 60 ? 'fraud-medium' : 'fraud-high')) . '">' . $statistics['fraud_score'] . '</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Status</div>
-                    <div class="info-value">
-                        <span class="status-badge status-' . $participant['status'] . '">' . $this->getStatusLabel($participant['status']) . '</span>
-                    </div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Cadastro</div>
-                    <div class="info-value">' . date('d/m/Y H:i', strtotime($participant['created_at'])) . '</div>
-                </div>
-            </div>
+            if (!empty($_GET['fraud_score'])) {
+                $range = explode('-', $_GET['fraud_score']);
+                if (count($range) == 2) {
+                    $where[] = 'p.fraud_score BETWEEN ? AND ?';
+                    $params[] = $range[0];
+                    $params[] = $range[1];
+                }
+            }
             
-            <div style="margin-top: 20px;">
-                <a href="/admin/participants" class="btn btn-primary">← Voltar</a>';
-                
-                if ($participant['status'] === 'active') {
-                    echo '<a href="/admin/participants/suspend/' . $participant['id'] . '" class="btn btn-warning" style="margin-left: 10px;" onclick="return confirm(\'Suspender participante?\')">⏸️ Suspender</a>';
-                }
-                
-                if (in_array($participant['status'], ['suspended', 'suspicious'])) {
-                    echo '<a href="/admin/participants/reactivate/' . $participant['id'] . '" class="btn btn-success" style="margin-left: 10px;">✅ Reativar</a>';
-                }
-                
-                if ($participant['status'] !== 'blocked') {
-                    echo '<a href="/admin/participants/block/' . $participant['id'] . '" class="btn btn-danger" style="margin-left: 10px;" onclick="return confirm(\'Bloquear participante?\')">🚫 Bloquear</a>';
-                }
-                
-                echo '</div>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">' . $statistics['total_numbers'] . '</div>
-                <div class="stat-label">Total de Números</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">' . $statistics['paid_numbers'] . '</div>
-                <div class="stat-label">Números Pagos</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">' . $statistics['reserved_numbers'] . '</div>
-                <div class="stat-label">Números Reservados</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">R$ ' . number_format($statistics['total_spent'], 2, ',', '.') . '</div>
-                <div class="stat-label">Total Gasto</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">' . $statistics['unique_raffles'] . '</div>
-                <div class="stat-label">Rifas Participadas</div>
-            </div>
-        </div>
-        
-        <div class="history-table">
-            <h3 style="color: #2c3e50; margin-bottom: 20px;">📋 Histórico de Participações</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Data</th>
-                        <th>Rifa</th>
-                        <th>Número</th>
-                        <th>Status</th>
-                        <th>Valor</th>
-                    </tr>
-                </thead>
-                <tbody>';
-        
-        foreach ($history as $item) {
-            echo '<tr>
-                <td>' . date('d/m/Y H:i', strtotime($item['created_at'])) . '</td>
-                <td>' . htmlspecialchars($item['raffle_title']) . '</td>
-                <td>' . $item['number'] . '</td>
-                <td>
-                    <span class="status-badge status-' . $item['status'] . '">' . $this->getStatusLabel($item['status']) . '</span>
-                </td>
-                <td>R$ ' . number_format($item['payment_amount'] ?? 0, 2, ',', '.') . '</td>
-            </tr>';
+            $whereClause = implode(' AND ', $where);
+            
+            // Obter todos os participantes (sem limite)
+            $sql = "SELECT p.*, 
+                           (SELECT COUNT(DISTINCT rn.raffle_id) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_raffles,
+                           (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf) as total_numbers,
+                           (SELECT SUM(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as total_spent,
+                           (SELECT AVG(rn.payment_amount) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'paid') as avg_ticket
+                    FROM participants p
+                    WHERE $whereClause
+                    ORDER BY p.created_at DESC";
+            
+            $stmt = $this->db->query($sql, $params);
+            $participants = $stmt->fetchAll();
+            
+            // Gerar CSV
+            $filename = 'participantes_' . date('Y-m-d_H-i-s') . '.csv';
+            
+            header('Content-Type: text/csv');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            
+            $output = fopen('php://output', 'w');
+            
+            // Cabeçalho
+            fputcsv($output, [
+                'ID', 'Nome', 'CPF', 'E-mail', 'Telefone', 'Endereço',
+                'Status', 'Score Fraude', 'Data de Cadastro', 'Rifas Participadas',
+                'Números Comprados', 'Total Gasto', 'Ticket Médio'
+            ]);
+            
+            // Dados
+            foreach ($participants as $participant) {
+                fputcsv($output, [
+                    $participant['id'],
+                    $participant['name'],
+                    $participant['cpf'],
+                    $participant['email'],
+                    $participant['phone'] ?? '',
+                    $participant['address'] ?? '',
+                    $participant['status'],
+                    $participant['fraud_score'],
+                    $participant['created_at'],
+                    $participant['total_raffles'] ?? 0,
+                    $participant['total_numbers'] ?? 0,
+                    $participant['total_spent'] ?? 0,
+                    $participant['avg_ticket'] ?? 0
+                ]);
+            }
+            
+            fclose($output);
+            
+        } catch (Exception $e) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        echo '</tbody>
-            </table>
-        </div>
-    </div>
-</body>
-</html>';
     }
     
     /**
-     * Exibir participantes suspeitos
+     * API: Atualizar score de fraude
      */
-    private function showSuspiciousParticipants($participants) {
-        echo '<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Participantes Suspeitos - ' . SITE_NAME . '</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: "Segoe UI", Arial, sans-serif; background: #f8f9fa; }
-        .header { background: linear-gradient(45deg, #2c3e50, #34495e); color: white; padding: 20px 0; box-shadow: 0 5px 20px rgba(0,0,0,0.1); }
-        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: space-between; align-items: center; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .alert { background: #fff3cd; color: #856404; padding: 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #f39c12; }
-        .table { background: white; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); overflow: hidden; }
-        .table table { width: 100%; border-collapse: collapse; }
-        .table th { background: #f8f9fa; padding: 15px; text-align: left; font-weight: 600; color: #2c3e50; border-bottom: 2px solid #e9ecef; }
-        .table td { padding: 15px; border-bottom: 1px solid #e9ecef; }
-        .table tr:hover { background: #f8f9fa; }
-        .fraud-score { font-weight: bold; }
-        .fraud-medium { color: #f39c12; }
-        .fraud-high { color: #e74c3c; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .logout-btn { background: #e74c3c; color: white; padding: 10px 20px; text-decoration: none; border-radius: 25px; transition: all 0.3s; }
-        .logout-btn:hover { background: #c0392b; transform: translateY(-2px); }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="header-content">
-            <div>
-                <h1>🎯 ' . SITE_NAME . '</h1>
-                <small>Participantes Suspeitos</small>
-            </div>
-            <a href="/logout" class="logout-btn">🚪 Sair</a>
-        </div>
-    </div>
-    
-    <div class="container">
-        <div class="alert">
-            <strong>⚠️ Atenção:</strong> Lista de participantes com score de fraude elevado ou comportamento suspeito.
-        </div>
+    public function updateFraudScore($participantId) {
+        header('Content-Type: application/json');
         
-        <div class="table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>CPF</th>
-                        <th>Nome</th>
-                        <th>E-mail</th>
-                        <th>Score Fraude</th>
-                        <th>Status</th>
-                        <th>Total Números</th>
-                        <th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>';
-        
-        foreach ($participants as $participant) {
-            echo '<tr>
-                <td>' . htmlspecialchars($participant['cpf']) . '</td>
-                <td>' . htmlspecialchars($participant['name']) . '</td>
-                <td>' . htmlspecialchars($participant['email']) . '</td>
-                <td><span class="fraud-score ' . ($participant['fraud_score'] <= 60 ? 'fraud-medium' : 'fraud-high') . '">' . $participant['fraud_score'] . '</span></td>
-                <td>' . htmlspecialchars($participant['status']) . '</td>
-                <td>' . $participant['total_numbers'] . '</td>
-                <td>
-                    <a href="/admin/participants/details/' . $participant['cpf'] . '" class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;">📊</a>
-                </td>
-            </tr>';
+        try {
+            $data = json_decode(file_get_contents('php://input'), true);
+            $score = intval($data['score'] ?? 0);
+            
+            if ($score < 0 || $score > 100) {
+                throw new Exception("Score deve estar entre 0 e 100");
+            }
+            
+            // Obter participante
+            $participant = $this->getParticipantById($participantId);
+            if (!$participant) {
+                throw new Exception("Participante não encontrado");
+            }
+            
+            // Atualizar score
+            $participantModel = new Participant($this->db);
+            $participantModel->updateFraudScore($participantId, $score);
+            
+            echo json_encode(['success' => true]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
-        
-        echo '</tbody>
-            </table>
-        </div>
-        
-        <div style="margin-top: 20px; text-align: center;">
-            <a href="/admin/participants" class="btn btn-primary">← Voltar</a>
-        </div>
-    </div>
-</body>
-</html>';
     }
     
     /**
-     * Exibir página de erro
+     * API: Limpar participantes antigos
      */
-    private function showError($message) {
-        echo '<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Erro - ' . SITE_NAME . '</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #f8f9fa; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-        .error-container { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
-        .error-icon { font-size: 4em; margin-bottom: 20px; }
-        .error-title { color: #e74c3c; margin-bottom: 20px; }
-        .error-message { color: #666; margin-bottom: 30px; }
-        .btn { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; font-weight: 600; }
-        .btn-primary { background: #3498db; color: white; }
-    </style>
-</head>
-<body>
-    <div class="error-container">
-        <div class="error-icon">❌</div>
-        <h2 class="error-title">Erro</h2>
-        <p class="error-message">' . htmlspecialchars($message) . '</p>
-        <a href="/admin/participants" class="btn btn-primary">Voltar</a>
-    </div>
-</body>
-</html>';
+    public function cleanupOldParticipants() {
+        header('Content-Type: application/json');
+        
+        try {
+            $days = intval($_GET['days'] ?? 365);
+            
+            $participantModel = new Participant($this->db);
+            $deletedCount = $participantModel->cleanupOldParticipants($days);
+            
+            echo json_encode(['success' => true, 'deleted_count' => $deletedCount]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
     }
     
     /**
-     * Obter label do status
+     * API: Verificar comportamento suspeito
      */
-    private function getStatusLabel($status) {
-        $labels = [
-            'active' => 'Ativo',
-            'suspended' => 'Suspenso',
-            'blocked' => 'Bloqueado',
-            'suspicious' => 'Suspeito'
-        ];
+    public function checkSuspiciousBehavior() {
+        header('Content-Type: application/json');
         
-        return $labels[$status] ?? $status;
+        try {
+            $suspicious = [];
+            
+            // Verificar múltiplas tentativas de reserva sem pagamento
+            $sql = "SELECT p.cpf, p.name, COUNT(*) as attempts
+                    FROM fraud_attempts fa
+                    JOIN participants p ON fa.cpf = p.cpf
+                    WHERE fa.attempt_type = 'reservation'
+                    AND fa.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                    GROUP BY p.cpf, p.name
+                    HAVING attempts >= 5";
+            
+            $stmt = $this->db->query($sql);
+            $reservations = $stmt->fetchAll();
+            
+            foreach ($reservations as $r) {
+                $suspicious[] = [
+                    'type' => 'multiple_reservations',
+                    'cpf' => $r['cpf'],
+                    'name' => $r['name'],
+                    'details' => ['attempts' => $r['attempts']]
+                ];
+            }
+            
+            // Verificar e-mails descartáveis
+            $sql = "SELECT p.cpf, p.name, p.email
+                    FROM participants p
+                    WHERE p.email LIKE '%@tempmail%' 
+                    OR p.email LIKE '%@10minutemail%'
+                    OR p.email LIKE '%@guerrillamail%'
+                    OR p.email LIKE '%@mailinator%'
+                    AND p.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+            
+            $stmt = $this->db->query($sql);
+            $disposables = $stmt->fetchAll();
+            
+            foreach ($disposables as $d) {
+                $suspicious[] = [
+                    'type' => 'disposable_email',
+                    'cpf' => $d['cpf'],
+                    'name' => $d['name'],
+                    'details' => ['email' => $d['email']]
+                ];
+            }
+            
+            // Verificar CPFs com comportamento anormal
+            $sql = "SELECT p.cpf, p.name, p.fraud_score,
+                           (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'reserved') as reserved_count
+                    FROM participants p
+                    WHERE p.fraud_score > 70
+                    OR (SELECT COUNT(*) FROM raffle_numbers rn WHERE rn.participant_cpf = p.cpf AND rn.status = 'reserved') > 10";
+            
+            $stmt = $this->db->query($sql);
+            $highRisk = $stmt->fetchAll();
+            
+            foreach ($highRisk as $h) {
+                $suspicious[] = [
+                    'type' => 'high_risk',
+                    'cpf' => $h['cpf'],
+                    'name' => $h['name'],
+                    'details' => [
+                        'fraud_score' => $h['fraud_score'],
+                        'reserved_count' => $h['reserved_count']
+                    ]
+                ];
+            }
+            
+            echo json_encode(['success' => true, 'suspicious' => $suspicious]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * Obter participante por ID
+     */
+    private function getParticipantById($id) {
+        $sql = "SELECT * FROM participants WHERE id = ?";
+        $stmt = $this->db->query($sql, [$id]);
+        return $stmt->fetch();
+    }
+    
+    /**
+     * API: Obter participantes por rifa
+     */
+    public function getParticipantsByRaffle($raffleId) {
+        header('Content-Type: application/json');
+        
+        try {
+            $sql = "SELECT DISTINCT p.cpf, p.name, p.email, p.phone, p.status, p.fraud_score,
+                           COUNT(rn.id) as numbers_count,
+                           SUM(rn.payment_amount) as total_spent
+                    FROM participants p
+                    JOIN raffle_numbers rn ON p.cpf = rn.participant_cpf
+                    WHERE rn.raffle_id = ? AND rn.status = 'paid'
+                    GROUP BY p.cpf, p.name, p.email, p.phone, p.status, p.fraud_score
+                    ORDER BY total_spent DESC";
+            
+            $stmt = $this->db->query($sql, [$raffleId]);
+            $participants = $stmt->fetchAll();
+            
+            echo json_encode(['success' => true, 'participants' => $participants]);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * API: Verificar limite de compras
+     */
+    public function checkPurchaseLimit($cpf, $raffleId, $quantity) {
+        header('Content-Type: application/json');
+        
+        try {
+            $participantModel = new Participant($this->db);
+            $participantModel->checkPurchaseLimit($cpf, $raffleId, $quantity);
+            
+            echo json_encode(['success' => true, 'message' => 'Limite verificado']);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+    }
+    
+    /**
+     * API: Verificar reservas recentes
+     */
+    public function checkRecentReservations($cpf) {
+        header('Content-Type: application/json');
+        
+        try {
+            $participantModel = new Participant($this->db);
+            $participantModel->checkRecentReservations($cpf);
+            
+            echo json_encode(['success' => true, 'message' => 'Reservas verificadas']);
+            
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
     }
 }
 
